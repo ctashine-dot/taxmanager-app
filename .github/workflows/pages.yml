@@ -1,0 +1,42 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: 실제로 열리는지 확인
+        run: |
+          url="${{ steps.deployment.outputs.page_url }}"
+          echo "주소: $url"
+          for i in 1 2 3 4 5; do
+            code=$(curl -sL -o /tmp/p.html -w '%{http_code}' "$url")
+            if grep -q TaxManager /tmp/p.html; then
+              echo "✅ 앱 정상 서비스 (HTTP $code · $(wc -c < /tmp/p.html) bytes)"; exit 0
+            fi
+            echo "  시도 $i: HTTP $code — 반영 대기"; sleep 20
+          done
+          echo "⚠ 아직 반영 전. 1~2분 뒤 브라우저에서 확인하세요."
