@@ -1,0 +1,29 @@
+name: Auth check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 로그인 핸들러와 그 의존 파일 상태
+        run: |
+          H=https://taxmanager-6ed88.firebaseapp.com
+          echo "── 핸들러 본문 ──"
+          code=$(curl -s -o /tmp/h.html -w '%{http_code}' "$H/__/auth/handler")
+          echo "HTTP $code · $(wc -c < /tmp/h.html) bytes"
+          echo "--- 앞부분 ---"; head -c 600 /tmp/h.html; echo
+          echo "--- 참조하는 스크립트 ---"
+          grep -oE '(src|href)="[^"]+"' /tmp/h.html | sed 's/^/   /' | head -20
+          echo
+          echo "── 핸들러가 쓰는 하위 경로들 ──"
+          for p in /__/firebase/init.json /__/firebase/init.js \
+                   /__/auth/handler.js /__/auth/experiments.js \
+                   /__/auth/iframe /__/auth/iframe.js ; do
+            c=$(curl -s -o /tmp/x -w '%{http_code}' "$H$p")
+            t=$(grep -o '<title>[^<]*' /tmp/x 2>/dev/null | head -1 | sed 's/<title>//')
+            printf '   %-28s HTTP %s  %s  (%s bytes)\n' "$p" "$c" "$t" "$(wc -c < /tmp/x)"
+          done
