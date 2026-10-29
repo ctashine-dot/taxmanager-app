@@ -961,8 +961,8 @@ function moveToSeongsi(clientId, incomePid) {
   const inc = G.periods.find(p => p.id === incomePid);
   const ss = _siblingSeongsiPeriod(inc);
   if (!c || !inc || !ss) { toast('성실신고 기간을 찾을 수 없습니다', 'warning'); return; }
-  const jn = (c.jumin||'').replace(/[-\s]/g,'');
-  const ssClients = _periodClientList(ss).filter(x => (x.jumin||'').replace(/[-\s]/g,'') === jn && jn);
+  const jn = _jnKey(c);
+  const ssClients = _periodClientList(ss).filter(x => _jnKey(x) === jn && jn);
   if (!confirm(`'${c.name}'는 성실신고 리스트에도 동일 주민번호로 등록되어 있습니다.\n성실신고가 우선이므로 종합소득세 리스트에서 제외하고 성실신고 그룹으로 이동할까요?\n\n[확인] 성실신고로 이동  [취소] 종합소득세에 그대로 두기`)) return;
   // 성실신고 그룹키 결정(같은 주민 기존 그룹 우선)
   let gk = ssClients.find(x => x.incomeGroupKey)?.incomeGroupKey;
@@ -1006,6 +1006,7 @@ const DEFAULT_PERIODS = PERIOD_TEMPLATES.map(t => ({
 
 function saveToLS() {
   try {
+    _trimAllJumin();   // 주민번호 뒷자리는 어떤 경로로 들어왔든 여기서 떨어진다
     localStorage.setItem('tm_clients', JSON.stringify(G.clients));
     localStorage.setItem('tm_periods', JSON.stringify(G.periods));
     localStorage.setItem('tm_julgae', JSON.stringify(G.julgae));
@@ -1476,14 +1477,14 @@ function buildClientGroupMap(allClients) {
     if (c.status === '해지' || c.status === '폐업') return;
     const r = (c.rep || '').trim();
     if (r) repCount[r] = (repCount[r] || 0) + 1;
-    const jn = (c.jumin || '').replace(/[-\s]/g, '');
-    if (jn && jn.length >= 13 && c.taxType !== '법인') juminCount[jn] = (juminCount[jn] || 0) + 1;
+    const jn = _jnKey(c);
+    if (jn && c.taxType !== '법인') juminCount[jn] = (juminCount[jn] || 0) + 1;
   });
   return function getGroupKey(c) {
     if (c.soloGroup) return 'S:' + c.id;
     if (c.relatedGroup && c.relatedGroup.trim()) return 'G:' + c.relatedGroup.trim();
-    const jn = (c.jumin || '').replace(/[-\s]/g, '');
-    if (jn && jn.length >= 13 && c.taxType !== '법인' && juminCount[jn] > 1) return 'J:' + jn;
+    const jn = _jnKey(c);
+    if (jn && c.taxType !== '법인' && juminCount[jn] > 1) return 'J:' + jn;
     const r = (c.rep || '').trim();
     if (r && repCount[r] > 1) return 'R:' + r;
     return 'S:' + c.id;
@@ -3239,7 +3240,7 @@ function renderClients() {
       const _incSub = (!inGroup && !isJuminLead && !isRelatedLead && c.incomeGroupKey && _incCount[c.incomeGroupKey] > 1) ? (()=>{
         const mem = G.clients.filter(x => x.incomeGroupKey===c.incomeGroupKey && x.status!=='해지' && x.status!=='폐업');
         const lead = mem.find(x=>x.groupMain) || mem[0];
-        const same = new Set(mem.map(x=>(x.jumin||'').replace(/[-\s]/g,'')).filter(Boolean)).size <= 1;
+        const same = new Set(mem.map(x=>_jnKey(x)).filter(Boolean)).size <= 1;
         return `<span style="font-size:10px;color:#00838f;font-weight:600;margin-left:4px" title="신고 ${same?'동일인':'공동사업자'} 그룹 연결 (${mem.length}개)">🔗 ${esc(lead.name)}${mem.length>1?` 외${mem.length-1}`:''}</span>`;
       })() : '';
       return `<tr class="client-row" onpointerdown="startLongPress(event,${c.id})" onpointermove="moveLongPress(event)" onpointerup="cancelLongPress()" onpointercancel="cancelLongPress()" oncontextmenu="event.preventDefault()" onclick="if(window._lpFired){window._lpFired=false}else{toggleExpand(${c.id})}" style="${inGroup?`border-left:3px solid ${gc}`:''}" >
@@ -6042,9 +6043,9 @@ window.saveForm = function(id) {
   }
 
   // 주민번호/법인등록번호 중복 검사 (전부 0인 임시번호는 제외)
-  const jn = (d.jumin||'').replace(/[-\s]/g,'');
-  if (jn && !/^0+$/.test(jn)) {
-    const juminDup = G.clients.find(c => c.id !== id && c.jumin && c.jumin.replace(/[-\s]/g,'') === jn);
+  const jn = _jnKey(d);
+  if (jn) {
+    const juminDup = G.clients.find(c => c.id !== id && _jnKey(c) === jn);
     if (juminDup) {
       const lbl = isCorpType(d.taxType) ? '법인등록번호' : '주민번호';
       const warn = isCorpType(d.taxType)
@@ -6841,7 +6842,7 @@ function renderJulgae() {
     if (!_isPlainIncome) return new Set();
     const ss = _siblingSeongsiPeriod(period);
     if (!ss) return new Set();
-    return new Set(_periodClientList(ss).map(c => (c.jumin||'').replace(/[-\s]/g,'')).filter(Boolean));
+    return new Set(_periodClientList(ss).map(c => _jnKey(c)).filter(Boolean));
   })();
 
   let clients = baseClients;
@@ -7064,20 +7065,20 @@ function renderJulgae() {
   const _isRealNum = s => s && !/^0+$/.test(s);
   const _juminCnt = {}, _bizCnt = {};
   clients.forEach(x => {
-    const jn=(x.jumin||'').replace(/[-\s]/g,''); if(_isRealNum(jn)) _juminCnt[jn]=(_juminCnt[jn]||0)+1;
+    const jn=_jnKey(x); if(jn) _juminCnt[jn]=(_juminCnt[jn]||0)+1;
     const bn=(x.bizNo||'').replace(/\D/g,''); if(_isRealNum(bn)) _bizCnt[bn]=(_bizCnt[bn]||0)+1;
   });
   const _nmKey = s => (s||'').replace(/\s/g,'');
   const _jGrpNorm = c => {
     if (c.incomeGroupKey) return c.incomeGroupKey;          // 명시 지정(공동사업자 연결)
-    const jn=(c.jumin||'').replace(/[-\s]/g,'');
+    const jn=_jnKey(c);
     const bn=(c.bizNo||'').replace(/\D/g,'');
     if (rt === 'corp') {                                    // 법인: 본점·지점(같은 법인등록번호)
-      if (_isRealNum(jn) && _juminCnt[jn]>1) return 'jm:'+jn;
+      if (jn && _juminCnt[jn]>1) return 'jm:'+jn;
       return '';
     }
     // 소득세·성실
-    if (_isRealNum(jn) && _juminCnt[jn]>1) return 'jm:'+jn;             // 동일인 여러 사업장
+    if (jn && _juminCnt[jn]>1) return 'jm:'+jn;                         // 동일인 여러 사업장
     if (_isRealNum(bn) && bn.length>=10 && _bizCnt[bn]>1) return 'bz:'+bn; // 공동사업자(같은 사업자번호)
     return '';
   };
@@ -7743,7 +7744,7 @@ function renderJulgae() {
       const _closedBadge = c.listRemoved
         ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#eceff1;color:#607d8b;margin-left:3px;flex-shrink:0;font-weight:700" title="거래처목록에서 삭제됨 — 신고리스트 기록 보존">목록제외</span>`
         : (c.status==='폐업'||c.status==='해지') ? `<span style="font-size:9px;padding:1px 5px;border-radius:4px;background:#fdecea;color:#c62828;margin-left:3px;flex-shrink:0;font-weight:700" title="${c.status} — 거래처목록 제외(귀속연도 영업분 신고대상)">${c.status}${clientCloseYear(c)?` ${String(clientCloseYear(c)).slice(2)}`:''}</span>` : '';
-      const _ssDupBadge = (_isPlainIncome && !item.isGroupChild && (c.jumin||'').replace(/[-\s]/g,'') && _ssDupJumin.has((c.jumin||'').replace(/[-\s]/g,''))) ? `<span onclick="event.stopPropagation();moveToSeongsi(${c.id},'${pKey2}')" style="font-size:9px;padding:1px 5px;border-radius:4px;background:#ede7f6;color:#6a1b9a;margin-left:3px;flex-shrink:0;font-weight:700;cursor:pointer;border:1px solid #ce93d8" title="동일 주민번호가 성실신고 리스트에 있습니다. 클릭 → 성실신고 그룹으로 이동(성실신고 우선)">⚑성실중복</span>` : '';
+      const _ssDupBadge = (_isPlainIncome && !item.isGroupChild && _jnKey(c) && _ssDupJumin.has(_jnKey(c))) ? `<span onclick="event.stopPropagation();moveToSeongsi(${c.id},'${pKey2}')" style="font-size:9px;padding:1px 5px;border-radius:4px;background:#ede7f6;color:#6a1b9a;margin-left:3px;flex-shrink:0;font-weight:700;cursor:pointer;border:1px solid #ce93d8" title="동일 주민번호가 성실신고 리스트에 있습니다. 클릭 → 성실신고 그룹으로 이동(성실신고 우선)">⚑성실중복</span>` : '';
       // 사업자번호·주민번호로 자동그룹 안 되지만 상호/대표자가 같은 거래처가 있으면 묶기 제안
       // 묶기 버튼은 상호 탭 → 메모/이력 창의 '공동사업자 묶기'로 이동(인라인 배지 제거)
       const _nameGrpBadge = '';
@@ -11325,6 +11326,44 @@ function revealEmpPII(empId, field) {
 //  ⚠ 저장값(c.jumin/c.repJumin)은 절대 건드리지 않는다. 관계사 그룹 자동묶기,
 //    공동사업자 연동, 중복검사가 주민번호 원본을 그대로 쓰기 때문에
 //    화면 표시만 가리고 상태값은 원본 그대로 유지한다.
+// ── 주민번호: 앞 7자리만 보관 ─────────────────────────────────────
+//  전체 13자리를 평문으로 쌓아두면 (1) 개인정보보호법상 암호화 의무 대상이고
+//  (2) 구글 자동탐지가 '대량 개인식별번호 수집'으로 보아 DB 를 정지시킨다.
+//  실제로 쓰는 건 표시(800101-1******)와 '같은 사람 묶기' 뿐이라,
+//  생년월일+성별(앞 7자리)만 남기고 뒷자리는 버린다.
+//  ※ 법인의 경우 이 칸은 법인등록번호라 개인정보가 아니므로 그대로 둔다.
+function _trimJumin7(v) {
+  const s = String(v == null ? '' : v);
+  const d = s.replace(/\D/g, '');
+  if (d.length < 13) return s;                 // 이미 짧거나 형식이 다르면 손대지 않음
+  return d.slice(0, 6) + '-' + d.slice(6, 7);  // 800101-1
+}
+// 저장 직전에 한 번 훑어 뒷자리를 떼어낸다. 어떤 경로로 들어왔든 여기서 걸러진다.
+function _trimAllJumin() {
+  let n = 0;
+  (G.clients || []).forEach(c => {
+    if (!isCorpType(c.taxType)) {              // 개인만. 법인등록번호는 보존
+      const t = _trimJumin7(c.jumin);
+      if (t !== c.jumin) { c.jumin = t; n++; }
+    }
+    const r = _trimJumin7(c.repJumin);         // 대표자 주민번호는 법인이어도 개인정보
+    if (r !== c.repJumin) { c.repJumin = r; n++; }
+  });
+  return n;
+}
+// '같은 사람'을 가리키는 키. 전체 번호 없이도 동일인을 가려낸다.
+//  개인: 생년월일+성별(앞 7자리) + 대표자명   /  법인: 법인등록번호 그대로
+//  13자리가 남아 있는 옛 자료도 앞 7자리만 떼어 같은 키가 나오므로,
+//  뒷자리를 지우기 전후로 묶임이 달라지지 않는다.
+function _jnKey(c) {
+  if (!c) return '';
+  const d = String(c.jumin || '').replace(/\D/g, '');
+  if (!d || /^0+$/.test(d)) return '';
+  if (typeof isCorpType === 'function' && isCorpType(c.taxType)) return 'C:' + d;
+  if (d.length < 7) return '';
+  const r = String(c.rep || '').replace(/\s/g, '');
+  return r ? 'P:' + d.slice(0, 7) + '|' + r : '';
+}
 function maskJumin(s) {
   const d = String(s||'').replace(/[-\s]/g,'');
   if (!d) return '';
@@ -16670,9 +16709,9 @@ function openClientNotes(id) {
   // 공동사업자 그룹(묶기/풀기) — 메모/이력 창에서 관리
   const _igk = c.incomeGroupKey || '';
   const _grpMembers = _igk ? G.clients.filter(x=>x.incomeGroupKey===_igk) : [];
-  const _bnK = (c.bizNo||'').replace(/\D/g,''), _jnK = (c.jumin||'').replace(/[-\s]/g,'');
+  const _bnK = (c.bizNo||'').replace(/\D/g,''), _jnK = _jnKey(c);
   const _autoBiz = _bnK.length>=10 && G.clients.some(x=>x.id!==id && (x.bizNo||'').replace(/\D/g,'')===_bnK);
-  const _autoJum = _jnK && G.clients.some(x=>x.id!==id && (x.jumin||'').replace(/[-\s]/g,'')===_jnK);
+  const _autoJum = _jnK && G.clients.some(x=>x.id!==id && _jnKey(x)===_jnK);
   const _btnJoin = `background:#fff;color:#00897b;border:1.5px solid #00897b`;
   const _btnUnlink = `background:#fff;color:#e53935;border:1.5px solid #ef9a9a`;
   const groupSection = `
