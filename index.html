@@ -1048,6 +1048,13 @@ function saveToLS() {
     console.error('로컬 저장 실패:', e);
     showSaveError('로컬 저장 공간이 부족합니다');
   }
+  // 클라우드에서 한 번도 제대로 읽어오지 못했으면 올리지 않는다.
+  //  읽기가 실패한 상태의 화면은 '비어 있는 화면'이고, 그걸 그대로 올리면
+  //  클라우드의 원본을 빈 내용으로 덮어쓴다. 로컬 저장까지만 하고 멈춘다.
+  if (G.user && !G.cloudLoadOK) {
+    showSaveError('클라우드 연결 안 됨 — 이 기기에만 저장됩니다');
+    return false;
+  }
   if (G.user) {
     window._lastLocalSaveAt = Date.now(); // 실시간 동기화에서 자기 에코 무시용
     return fbDb.ref('taxmanager/' + G.user.uid).set({
@@ -19973,9 +19980,31 @@ function attachRealtimeSync() {
   });
 }
 
+// 클라우드를 못 읽었을 때 화면 위에 계속 띄워두는 경고.
+//  이 상태에서 입력하면 이 기기에만 남고, 클라우드에는 올리지 않는다.
+function showCloudFailBanner() {
+  if (document.getElementById('cloud-fail-banner')) return;
+  if (!document.body) return;
+  const d = document.createElement('div');
+  d.id = 'cloud-fail-banner';
+  d.style.cssText = 'position:sticky;top:0;z-index:9998;background:#c62828;color:#fff;'
+    + 'padding:9px 14px;font-size:13px;line-height:1.6;text-align:center;font-weight:600';
+  d.innerHTML = '⚠ 클라우드(데이터베이스)에 연결하지 못했습니다 — 지금 보이는 내용은 이 기기에 남아 있던 사본입니다.'
+    + '<div style="font-weight:400;font-size:12px;margin-top:3px">'
+    + '입력하신 내용은 <b>이 기기에만</b> 저장되고 클라우드에는 올리지 않습니다(원본을 덮어쓰지 않기 위해서입니다). '
+    + '<button onclick="location.reload()" style="margin-left:6px;padding:3px 10px;border-radius:7px;border:none;'
+    + 'background:#fff;color:#c62828;font-weight:700;cursor:pointer;font-family:inherit">다시 시도</button></div>';
+  document.body.prepend(d);
+}
 async function loadFromFirebase() {
   try {
-    const snap = await fbDb.ref('taxmanager/' + G.user.uid).once('value');
+    // once('value') 는 연결이 안 되면 거부되지 않고 영영 대기한다.
+    //  그대로 두면 '데이터 로딩중' 화면에서 멈춘 채 끝나므로 시간을 끊는다.
+    const snap = await Promise.race([
+      fbDb.ref('taxmanager/' + G.user.uid).once('value'),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('클라우드 응답 없음(시간 초과)')), 20000)),
+    ]);
+    G.cloudLoadOK = true;          // 여기까지 와야 클라우드에 쓸 자격이 생긴다
     const data = snap.val();
     if (data) {
       applyCloudSnapshot(data);
@@ -20034,6 +20063,9 @@ async function loadFromFirebase() {
     }
   } catch(e) {
     console.error('Firebase 로드 실패, 로컬 데이터 사용:', e);
+    G.cloudLoadOK = false;
+    window.addEventListener('DOMContentLoaded', showCloudFailBanner);
+    setTimeout(showCloudFailBanner, 0);
     const saved = localStorage.getItem('tm_clients');
     if (saved) G.clients = JSON.parse(saved);
     const sp = localStorage.getItem('tm_periods');
