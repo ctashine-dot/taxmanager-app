@@ -9,21 +9,27 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: 로그인 핸들러와 그 의존 파일 상태
+      - name: 실시간 데이터베이스 생존 확인
         run: |
-          H=https://taxmanager-6ed88.firebaseapp.com
-          echo "── 핸들러 본문 ──"
-          code=$(curl -s -o /tmp/h.html -w '%{http_code}' "$H/__/auth/handler")
-          echo "HTTP $code · $(wc -c < /tmp/h.html) bytes"
-          echo "--- 앞부분 ---"; head -c 600 /tmp/h.html; echo
-          echo "--- 참조하는 스크립트 ---"
-          grep -oE '(src|href)="[^"]+"' /tmp/h.html | sed 's/^/   /' | head -20
+          DB=https://taxmanager-6ed88-default-rtdb.firebaseio.com
+          echo "── 루트 읽기 (규칙상 거부되어야 정상) ──"
+          code=$(curl -s -o /tmp/d.json -w '%{http_code}' "$DB/.json")
+          echo "HTTP $code · $(wc -c < /tmp/d.json) bytes"
+          head -c 400 /tmp/d.json; echo
           echo
-          echo "── 핸들러가 쓰는 하위 경로들 ──"
-          for p in /__/firebase/init.json /__/firebase/init.js \
-                   /__/auth/handler.js /__/auth/experiments.js \
-                   /__/auth/iframe /__/auth/iframe.js ; do
-            c=$(curl -s -o /tmp/x -w '%{http_code}' "$H$p")
-            t=$(grep -o '<title>[^<]*' /tmp/x 2>/dev/null | head -1 | sed 's/<title>//')
-            printf '   %-28s HTTP %s  %s  (%s bytes)\n' "$p" "$c" "$t" "$(wc -c < /tmp/x)"
-          done
+          echo "── shallow 조회 ──"
+          code=$(curl -s -o /tmp/s.json -w '%{http_code}' "$DB/.json?shallow=true")
+          echo "HTTP $code"; head -c 300 /tmp/s.json; echo
+          echo
+          echo "── 롱폴링 엔드포인트 (실제 연결 경로) ──"
+          code=$(curl -s -o /tmp/lp.txt -w '%{http_code}' "$DB/.lp?start=t&ser=1&cb=1&v=5")
+          echo "HTTP $code · $(wc -c < /tmp/lp.txt) bytes"; head -c 300 /tmp/lp.txt; echo
+          echo
+          echo "── 데이터베이스 인스턴스 메타 ──"
+          code=$(curl -s -o /tmp/m.json -w '%{http_code}' "$DB/.settings/rules.json")
+          echo "rules.json HTTP $code"; head -c 200 /tmp/m.json; echo
+          echo
+          echo "── 비교: 존재하지 않는 DB 는 어떻게 나오나 ──"
+          curl -s -o /tmp/n.json -w 'HTTP %{http_code}\n' \
+            "https://taxmanager-6ed88-nosuchdb.firebaseio.com/.json"
+          head -c 200 /tmp/n.json; echo
