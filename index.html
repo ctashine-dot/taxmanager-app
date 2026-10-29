@@ -18962,7 +18962,15 @@ function navBack() {
 // ══════════════════════════════════════════════════════
 // 모바일·인앱 브라우저에서는 팝업 로그인이 사실상 동작하지 않는다.
 //  (카카오톡/네이버 등 인앱 웹뷰는 팝업을 막고, iOS 사파리도 팝업을 자주 취소시킨다)
+// 앱이 올라간 주소가 인증 주소(authDomain)와 다른가.
+//  같으면(파이어베이스 호스팅 위) 리다이렉트가 잘 돌지만, 다르면 요즘 브라우저의
+//  서드파티 저장소 분리 때문에 리다이렉트가 조용히 실패한다 — 구글 계정을 고르고
+//  돌아와도 로그인이 안 된 상태로 남는다. 그 경우엔 팝업(postMessage)이 맞다.
+function _authIsCrossOrigin() {
+  try { return location.hostname !== _AUTH_HOST; } catch(e) { return false; }
+}
 function _preferRedirectLogin() {
+  if (_authIsCrossOrigin()) return false;   // 교차 출처면 리다이렉트가 깨진다 → 팝업
   const ua = navigator.userAgent || '';
   const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
   const inApp = /KAKAOTALK|NAVER\(|Line\/|FBAN|FBAV|Instagram|DaumApps|wv\)/i.test(ua);
@@ -18995,6 +19003,12 @@ function signInWithGoogle() {
       // 팝업이 막히거나 서로 취소된 경우엔 리다이렉트 방식으로 다시 시도
       if (c === 'auth/popup-blocked' || c === 'auth/cancelled-popup-request' ||
           c === 'auth/operation-not-supported-in-this-environment') {
+        if (_authIsCrossOrigin()) {
+          // 여기서 리다이렉트로 넘기면 돌아와도 로그인이 안 된 채 끝난다.
+          showErr({ code: 'popup-blocked', message:
+            '팝업이 막혀 로그인을 끝내지 못했습니다.\n주소창 옆 팝업 차단 아이콘에서 이 사이트를 허용한 뒤 다시 눌러주세요.' });
+          return;
+        }
         fbAuth.signInWithRedirect(provider).catch(showErr);
         return;
       }
